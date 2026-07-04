@@ -96,7 +96,6 @@ with st.sidebar:
         "Iris": px.data.iris,
         "Tips": px.data.tips,
         "Gapminder": px.data.gapminder,
-        
         "Wind": px.data.wind,
         "Stocks": px.data.stocks
     }
@@ -203,6 +202,46 @@ with tab_data:
     
     st.divider()
 
+    # ====================== MELT DATA FOR MULTI-METRIC PLOTTING ======================
+    with st.expander("🔄 Melt Data for Multi-Metric Plotting", expanded=False):
+        st.caption("Convert wide data (many metric columns) into long format. This makes it much easier to plot multiple metrics together using Color by or Facet on most chart types.")
+        
+        numeric_cols_for_melt = [c for c in st.session_state.df.columns if pd.api.types.is_numeric_dtype(st.session_state.df[c])]
+        
+        if len(numeric_cols_for_melt) < 2:
+            st.info("You need at least 2 numeric columns to melt the data.")
+        else:
+            id_vars = st.multiselect(
+                "ID columns (keep as-is, e.g. Date, Region, Category)",
+                [c for c in st.session_state.df.columns if c not in numeric_cols_for_melt],
+                default=[]
+            )
+            
+            value_vars = st.multiselect(
+                "Metric columns to melt (the ones you want to compare)",
+                numeric_cols_for_melt,
+                default=numeric_cols_for_melt[:min(5, len(numeric_cols_for_melt))]
+            )
+            
+            if st.button("Melt Data", type="primary"):
+                if not value_vars:
+                    st.error("Please select at least one metric column to melt.")
+                else:
+                    try:
+                        melted_df = pd.melt(
+                            st.session_state.df,
+                            id_vars=id_vars if id_vars else None,
+                            value_vars=value_vars,
+                            var_name="Metric",
+                            value_name="Value"
+                        )
+                        st.session_state.df = melted_df.copy()
+                        st.success(f"Data melted successfully! New shape: {melted_df.shape[0]:,} rows × {melted_df.shape[1]} columns")
+                        st.caption("You now have 'Metric' and 'Value' columns. Use 'Metric' in Color by or Facet for multi-metric analysis.")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Melt failed: {e}")
+    
     # ====================== COLUMN TOOLS (Add / Delete) ======================
     with st.expander("➕ Add / Delete Columns", expanded=True):
         st.caption("**Note:** Changes are applied immediately. If the new column doesn't appear right away, click the **'Apply Edits'** button above the table once.")
