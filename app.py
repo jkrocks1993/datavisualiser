@@ -38,6 +38,8 @@ if 'plot_config' not in st.session_state:
     st.session_state.plot_config = {}
 if 'plot_type' not in st.session_state:
     st.session_state.plot_type = None
+if 'dashboard_plots' not in st.session_state:
+    st.session_state.dashboard_plots = []  # List of plot configs for dashboard
 
 # ============ SIDEBAR ============
 with st.sidebar:
@@ -94,6 +96,7 @@ with st.sidebar:
         "Iris": px.data.iris,
         "Tips": px.data.tips,
         "Gapminder": px.data.gapminder,
+        
         "Wind": px.data.wind,
         "Stocks": px.data.stocks
     }
@@ -121,10 +124,11 @@ if st.session_state.df is None or st.session_state.df.empty:
 working_df = st.session_state.df.copy()
 
 # ============ TABS ============
-tab_data, tab_config, tab_viz = st.tabs([
+tab_data, tab_config, tab_viz, tab_dashboard = st.tabs([
     "📋 Data Preview & Edit", 
     "🎨 Plot Configuration", 
-    "📈 Visualize & Download"
+    "📈 Visualize & Download",
+    "📊 Dashboard"
 ])
 
 # ---------- TAB 1: DATA ----------
@@ -524,10 +528,15 @@ with tab_viz:
                 if cfg.get("color"):
                     color_kwargs["color"] = cfg["color"]
                     cscale = cfg.get("color_scale", "Viridis")
-                    if cfg["color"] in num_cols_local:
+                    
+                    # Only apply continuous scale to plot types that support it
+                    continuous_supported = ptype in ["Scatter Plot", "Bar Chart", "Histogram", 
+                                                     "Box Plot", "Violin Plot", "Density Heatmap"]
+                    
+                    if cfg["color"] in num_cols_local and continuous_supported:
                         color_kwargs["color_continuous_scale"] = cscale.lower()
                     else:
-                        # discrete palette
+                        # discrete palette (works for Line, Scatter, etc.)
                         pal = getattr(px.colors.qualitative, cscale, px.colors.qualitative.Plotly)
                         color_kwargs["color_discrete_sequence"] = pal
                 
@@ -690,6 +699,13 @@ with tab_viz:
                     
                     st.session_state.last_fig = fig
                     st.success("✅ Plot ready!")
+
+                    # Add to Dashboard button (Step 1 of advanced dashboard)
+                    if st.button("➕ Add this plot to Dashboard", key="add_to_dashboard"):
+                        plot_copy = st.session_state.plot_config.copy()
+                        plot_copy["id"] = len(st.session_state.dashboard_plots) + 1
+                        st.session_state.dashboard_plots.append(plot_copy)
+                        st.success("Plot added to Dashboard! Go to the 📊 Dashboard tab to view it.")
                 else:
                     st.warning("Plot type not fully implemented or missing required columns.")
             
@@ -755,6 +771,166 @@ with tab_viz:
             )
         
         st.caption("The HTML version is the most powerful — it preserves full interactivity for your audience.")
+
+# ---------- TAB 4: DASHBOARD (Step 1) ----------
+with tab_dashboard:
+    st.subheader("📊 Dashboard Builder")
+    st.caption("Combine multiple plots. Start by adding plots from the Visualize tab using the '➕ Add this plot to Dashboard' button.")
+
+    if not st.session_state.dashboard_plots:
+        st.info("No plots added yet. Create a plot in the **📈 Visualize & Download** tab and click **'➕ Add this plot to Dashboard'**.")
+    else:
+        # Layout control
+        layout_cols = st.selectbox(
+            "Dashboard Layout",
+            options=[1, 2, 3],
+            index=1,
+            help="Number of columns to arrange the plots"
+        )
+
+        # Clear dashboard button
+        if st.button("🗑️ Clear All Dashboard Plots"):
+            st.session_state.dashboard_plots = []
+            st.rerun()
+
+        st.divider()
+
+        # Render plots in grid
+        cols = st.columns(layout_cols)
+        
+        for idx, plot_cfg in enumerate(st.session_state.dashboard_plots):
+            col = cols[idx % layout_cols]
+            
+            with col:
+                st.markdown(f"**Plot {plot_cfg.get('id', idx+1)}: {plot_cfg.get('title', 'Untitled')}**")
+                
+                # Re-generate the figure using stored config
+                try:
+                    # Use the current working data
+                    current_df = st.session_state.df.copy() if st.session_state.df is not None else None
+                    
+                    if current_df is not None and not current_df.empty:
+                        # Simplified re-rendering (we'll improve this in later steps)
+                        fig = None
+                        ptype = plot_cfg.get("plot_type")
+                        
+                        # Re-render all supported plot types in Dashboard
+                        if ptype == "Bar Chart":
+                            y_val = plot_cfg.get("multiple_y") if plot_cfg.get("multiple_y") else plot_cfg.get("y")
+                            fig = px.bar(
+                                current_df,
+                                x=plot_cfg.get("x"),
+                                y=y_val,
+                                color=plot_cfg.get("color"),
+                                barmode=plot_cfg.get("barmode", "group"),
+                                title=plot_cfg.get("title"),
+                                height=400
+                            )
+                        elif ptype == "Line Plot":
+                            y_val = plot_cfg.get("multiple_y") if plot_cfg.get("multiple_y") else plot_cfg.get("y")
+                            fig = px.line(
+                                current_df,
+                                x=plot_cfg.get("x"),
+                                y=y_val,
+                                color=plot_cfg.get("color"),
+                                markers=True,
+                                title=plot_cfg.get("title"),
+                                height=400
+                            )
+                        elif ptype == "Scatter Plot":
+                            fig = px.scatter(
+                                current_df,
+                                x=plot_cfg.get("x"),
+                                y=plot_cfg.get("y"),
+                                color=plot_cfg.get("color"),
+                                title=plot_cfg.get("title"),
+                                height=400
+                            )
+                        elif ptype == "Histogram":
+                            fig = px.histogram(
+                                current_df,
+                                x=plot_cfg.get("x"),
+                                color=plot_cfg.get("color"),
+                                nbins=plot_cfg.get("nbins", 20),
+                                title=plot_cfg.get("title"),
+                                height=400
+                            )
+                        elif ptype == "Box Plot":
+                            fig = px.box(
+                                current_df,
+                                x=plot_cfg.get("x"),
+                                y=plot_cfg.get("y"),
+                                color=plot_cfg.get("color"),
+                                points="outliers",
+                                title=plot_cfg.get("title"),
+                                height=400
+                            )
+                        elif ptype == "Violin Plot":
+                            fig = px.violin(
+                                current_df,
+                                x=plot_cfg.get("x"),
+                                y=plot_cfg.get("y"),
+                                color=plot_cfg.get("color"),
+                                box=True,
+                                points="outliers",
+                                title=plot_cfg.get("title"),
+                                height=400
+                            )
+                        elif ptype == "Density Heatmap":
+                            fig = px.density_heatmap(
+                                current_df,
+                                x=plot_cfg.get("x"),
+                                y=plot_cfg.get("y"),
+                                title=plot_cfg.get("title"),
+                                height=400
+                            )
+                        elif ptype == "Pie Chart":
+                            fig = px.pie(
+                                current_df,
+                                names=plot_cfg.get("names"),
+                                values=plot_cfg.get("values"),
+                                title=plot_cfg.get("title"),
+                                height=400
+                            )
+                        elif ptype == "Sunburst Chart":
+                            fig = px.sunburst(
+                                current_df,
+                                path=plot_cfg.get("path", []),
+                                values=plot_cfg.get("values"),
+                                color=plot_cfg.get("color"),
+                                title=plot_cfg.get("title"),
+                                height=400
+                            )
+                        elif ptype == "Treemap":
+                            fig = px.treemap(
+                                current_df,
+                                path=plot_cfg.get("path", []),
+                                values=plot_cfg.get("values"),
+                                color=plot_cfg.get("color"),
+                                title=plot_cfg.get("title"),
+                                height=400
+                            )
+                        elif ptype == "Scatter Matrix":
+                            fig = px.scatter_matrix(
+                                current_df,
+                                dimensions=plot_cfg.get("dimensions", []),
+                                color=plot_cfg.get("color"),
+                                title=plot_cfg.get("title"),
+                                height=500
+                            )
+                        else:
+                            st.info(f"Preview for '{ptype}' is not yet supported in Dashboard.")
+                        
+                        if fig:
+                            st.plotly_chart(fig, use_container_width=True, key=f"dash_plot_{idx}")
+                    
+                    # Remove button for this plot
+                    if st.button(f"❌ Remove Plot {idx+1}", key=f"remove_{idx}"):
+                        st.session_state.dashboard_plots.pop(idx)
+                        st.rerun()
+                        
+                except Exception as e:
+                    st.error(f"Error rendering plot {idx+1}: {str(e)}")
 
 # Footer
 st.divider()
