@@ -811,96 +811,6 @@ with tab_viz:
         
         st.caption("The HTML version is the most powerful — it preserves full interactivity for your audience.")
 
-<<<<<<< HEAD
-# ---------- TAB 4: DASHBOARD (Step 1) ----------
-with tab_dashboard:
-    st.subheader("📊 Dashboard Builder")
-    st.caption("Combine multiple plots. Start by adding plots from the Visualize tab using the '➕ Add this plot to Dashboard' button.")
-
-    if not st.session_state.dashboard_plots:
-        st.info("No plots added yet. Create a plot in the **📈 Visualize & Download** tab and click **'➕ Add this plot to Dashboard'**.")
-    else:
-        # Layout control
-        layout_cols = st.selectbox(
-            "Dashboard Layout",
-            options=[1, 2, 3],
-            index=1,
-            help="Number of columns to arrange the plots"
-        )
-
-        # Clear dashboard button
-        if st.button("🗑️ Clear All Dashboard Plots"):
-            st.session_state.dashboard_plots = []
-            st.rerun()
-
-        st.divider()
-
-        # Render plots in grid
-        cols = st.columns(layout_cols)
-        
-        for idx, plot_cfg in enumerate(st.session_state.dashboard_plots):
-            col = cols[idx % layout_cols]
-            
-            with col:
-                st.markdown(f"**Plot {plot_cfg.get('id', idx+1)}: {plot_cfg.get('title', 'Untitled')}**")
-                
-                # Re-generate the figure using stored config
-                try:
-                    # Use the current working data
-                    current_df = st.session_state.df.copy() if st.session_state.df is not None else None
-                    
-                    if current_df is not None and not current_df.empty:
-                        # Simplified re-rendering (we'll improve this in later steps)
-                        fig = None
-                        ptype = plot_cfg.get("plot_type")
-                        
-                        # Basic re-creation for common types (expand later)
-                        if ptype == "Bar Chart":
-                            y_val = plot_cfg.get("multiple_y") if plot_cfg.get("multiple_y") else plot_cfg.get("y")
-                            fig = px.bar(
-                                current_df,
-                                x=plot_cfg.get("x"),
-                                y=y_val,
-                                color=plot_cfg.get("color"),
-                                barmode=plot_cfg.get("barmode", "group"),
-                                title=plot_cfg.get("title"),
-                                height=400
-                            )
-                        elif ptype == "Line Plot":
-                            y_val = plot_cfg.get("multiple_y") if plot_cfg.get("multiple_y") else plot_cfg.get("y")
-                            fig = px.line(
-                                current_df,
-                                x=plot_cfg.get("x"),
-                                y=y_val,
-                                color=plot_cfg.get("color"),
-                                markers=True,
-                                title=plot_cfg.get("title"),
-                                height=400
-                            )
-                        elif ptype == "Scatter Plot":
-                            fig = px.scatter(
-                                current_df,
-                                x=plot_cfg.get("x"),
-                                y=plot_cfg.get("y"),
-                                color=plot_cfg.get("color"),
-                                title=plot_cfg.get("title"),
-                                height=400
-                            )
-                        else:
-                            st.info(f"Preview for '{ptype}' will be improved in next update.")
-                        
-                        if fig:
-                            st.plotly_chart(fig, use_container_width=True, key=f"dash_plot_{idx}")
-                    
-                    # Remove button for this plot
-                    if st.button(f"❌ Remove Plot {idx+1}", key=f"remove_{idx}"):
-                        st.session_state.dashboard_plots.pop(idx)
-                        st.rerun()
-                        
-                except Exception as e:
-                    st.error(f"Error rendering plot {idx+1}: {str(e)}")
-
-=======
 # ---------- TAB 4: DASHBOARD (Step 1) ----------
 with tab_dashboard:
     st.subheader("📊 Dashboard Builder")
@@ -1061,7 +971,6 @@ with tab_dashboard:
                 except Exception as e:
                     st.error(f"Error rendering plot {idx+1}: {str(e)}")
 
->>>>>>> b96a469af1bd954e9c204cd9b9a61681379fb9da
 # Footer
 st.divider()
 st.caption("DataViz Studio • Make beautiful visualizations without writing code • Powered by Plotly & Streamlit")
