@@ -39,7 +39,9 @@ if 'plot_config' not in st.session_state:
 if 'plot_type' not in st.session_state:
     st.session_state.plot_type = None
 if 'dashboard_plots' not in st.session_state:
-    st.session_state.dashboard_plots = []  # List of plot configs for dashboard
+    st.session_state.dashboard_plots = []
+if 'editor_key' not in st.session_state:
+    st.session_state.editor_key = 0   # ← forces fresh data_editor after Apply/Reset
 
 # ============ SIDEBAR ============
 with st.sidebar:
@@ -66,22 +68,21 @@ with st.sidebar:
                 df_loaded = None
            
             if df_loaded is not None and not df_loaded.empty:
-                # Better processing for uploaded files (fixes many editing issues)
                 df_loaded = df_loaded.reset_index(drop=True)
                 df_loaded.columns = [str(c).strip() for c in df_loaded.columns]
                
-                # Try to auto-convert obvious datetime columns
                 for col in df_loaded.columns:
                     if df_loaded[col].dtype == 'object':
                         try:
                             converted = pd.to_datetime(df_loaded[col], errors='coerce')
-                            if converted.notna().sum() > len(df_loaded) * 0.5:  # if >50% converted successfully
+                            if converted.notna().sum() > len(df_loaded) * 0.5:
                                 df_loaded[col] = converted
                         except:
                             pass
                
                 st.session_state.df = df_loaded.copy()
                 st.session_state.original_df = df_loaded.copy()
+                st.session_state.editor_key += 1          # fresh editor
                 st.success(f"✅ Loaded {df_loaded.shape[0]:,} rows × {df_loaded.shape[1]} cols")
             else:
                 st.error("File loaded but appears empty.")
@@ -106,6 +107,7 @@ with st.sidebar:
         if col.button(name, key=f"demo_{name}", use_container_width=True):
             st.session_state.df = demo_datasets[name]().copy()
             st.session_state.original_df = st.session_state.df.copy()
+            st.session_state.editor_key += 1
             st.rerun()
    
     if st.button("🗑️ Clear Everything", type="secondary", use_container_width=True):
@@ -113,6 +115,7 @@ with st.sidebar:
             if key in st.session_state:
                 st.session_state[key] = None
         st.session_state.dashboard_plots = []
+        st.session_state.editor_key = 0
         st.rerun()
 
 # ============ MAIN ============
@@ -120,7 +123,6 @@ if st.session_state.df is None or st.session_state.df.empty:
     st.info("👈 Upload a file from the sidebar or click a demo dataset button to begin.")
     st.stop()
 
-# Working dataframe (fresh copy each rerun)
 working_df = st.session_state.df.copy()
 
 # ============ TABS ============
@@ -134,12 +136,12 @@ tab_data, tab_config, tab_viz, tab_dashboard = st.tabs([
 # ---------- TAB 1: DATA ----------
 with tab_data:
     st.subheader("✏️ Interactive Data Editor")
-    st.caption("Edit values, add or remove rows directly. Click **Apply Changes** when done.")
+    st.caption("Edit cells, add/delete rows. **Changes are temporary until you click Apply Edits.**")
    
-    # Data editor (compatible with older Streamlit versions)
+    # Dynamic key so the editor always reflects the latest data after Apply/Reset
     edited_df = st.data_editor(
         working_df,
-        key="main_data_editor",
+        key=f"main_data_editor_{st.session_state.editor_key}",
         use_container_width=True,
         num_rows="dynamic",
         hide_index=True
@@ -149,13 +151,15 @@ with tab_data:
     with btn_col1:
         if st.button("💾 Apply Edits", type="primary", use_container_width=True):
             st.session_state.df = edited_df.copy()
-            st.success("Data updated successfully!")
+            st.session_state.editor_key += 1          # force fresh editor
+            st.success("✅ Data updated successfully! CSV download will now use the edited data.")
             st.rerun()
    
     with btn_col2:
         if st.button("↩️ Reset to Original", use_container_width=True):
             if st.session_state.original_df is not None:
                 st.session_state.df = st.session_state.original_df.copy()
+                st.session_state.editor_key += 1
                 st.info("Reset to original data.")
                 st.rerun()
    
@@ -165,15 +169,15 @@ with tab_data:
    
     st.divider()
    
-    # ====================== BULK ROW DELETION (Compatible method) ======================
+    # ====================== BULK ROW DELETION ======================
     with st.expander("🗑️ Bulk Delete Rows (works on older Streamlit)", expanded=False):
         st.caption("This method works even on older versions of Streamlit that don't support row selection in the table.")
        
         if st.button("Enable row selection for bulk delete"):
-            # Add a temporary selection column
             if "__select_to_delete__" not in st.session_state.df.columns:
                 st.session_state.df["__select_to_delete__"] = False
-            st.success("Selection column added. Check the boxes in the '__select_to_delete__' column for rows you want to delete, then click 'Delete Selected Rows' below.")
+            st.session_state.editor_key += 1
+            st.success("Selection column added. Check the boxes, then click 'Delete Selected Rows'.")
             st.rerun()
        
         if "__select_to_delete__" in st.session_state.df.columns:
@@ -184,49 +188,49 @@ with tab_data:
                    
                     if num_deleted > 0:
                         st.session_state.df = st.session_state.df[~mask].copy()
-                        # Remove the temporary column
                         if "__select_to_delete__" in st.session_state.df.columns:
                             st.session_state.df = st.session_state.df.drop(columns=["__select_to_delete__"])
-                       
+                        st.session_state.editor_key += 1
                         st.success(f"Deleted {num_deleted} row(s).")
                         st.rerun()
                     else:
-                        st.warning("No rows were selected (no checkboxes checked).")
+                        st.warning("No rows were selected.")
                 except Exception as e:
                     st.error(f"Error during deletion: {e}")
            
             if st.button("Cancel / Remove selection column"):
                 if "__select_to_delete__" in st.session_state.df.columns:
                     st.session_state.df = st.session_state.df.drop(columns=["__select_to_delete__"])
+                st.session_state.editor_key += 1
                 st.info("Selection column removed.")
                 st.rerun()
    
     st.divider()
 
-    # ====================== MELT DATA FOR MULTI-METRIC PLOTTING ======================
+    # ====================== MELT ======================
     with st.expander("🔄 Melt Data for Multi-Metric Plotting", expanded=False):
-        st.caption("Convert wide data (many metric columns) into long format. This makes it much easier to plot multiple metrics together using Color by or Facet on most chart types.")
+        st.caption("Convert wide data into long format so you can easily color/facet by Metric.")
        
         numeric_cols_for_melt = [c for c in st.session_state.df.columns if pd.api.types.is_numeric_dtype(st.session_state.df[c])]
        
         if len(numeric_cols_for_melt) < 2:
-            st.info("You need at least 2 numeric columns to melt the data.")
+            st.info("You need at least 2 numeric columns to melt.")
         else:
             id_vars = st.multiselect(
-                "ID columns (keep as-is, e.g. Date, Region, Category)",
+                "ID columns (keep as-is)",
                 [c for c in st.session_state.df.columns if c not in numeric_cols_for_melt],
                 default=[]
             )
            
             value_vars = st.multiselect(
-                "Metric columns to melt (the ones you want to compare)",
+                "Metric columns to melt",
                 numeric_cols_for_melt,
                 default=numeric_cols_for_melt[:min(5, len(numeric_cols_for_melt))]
             )
            
             if st.button("Melt Data", type="primary"):
                 if not value_vars:
-                    st.error("Please select at least one metric column to melt.")
+                    st.error("Select at least one metric column.")
                 else:
                     try:
                         melted_df = pd.melt(
@@ -237,15 +241,15 @@ with tab_data:
                             value_name="Value"
                         )
                         st.session_state.df = melted_df.copy()
-                        st.success(f"Data melted successfully! New shape: {melted_df.shape[0]:,} rows × {melted_df.shape[1]} columns")
-                        st.caption("You now have 'Metric' and 'Value' columns. Use 'Metric' in Color by or Facet for multi-metric analysis.")
+                        st.session_state.editor_key += 1
+                        st.success(f"Melted! New shape: {melted_df.shape[0]:,} × {melted_df.shape[1]}")
                         st.rerun()
                     except Exception as e:
                         st.error(f"Melt failed: {e}")
 
-    # ====================== NEW: SELECT VARIABLES ======================
+    # ====================== SELECT VARIABLES ======================
     with st.expander("🔍 Select Variables to Keep", expanded=False):
-        st.caption("Choose exactly which columns you want to keep. Everything else will be dropped. Great for reducing clutter before plotting.")
+        st.caption("Drop unwanted columns in one click.")
         
         all_current_cols = list(st.session_state.df.columns)
         cols_to_keep = st.multiselect(
@@ -255,57 +259,48 @@ with tab_data:
             key="select_vars_multiselect"
         )
         
-        col_a, col_b = st.columns(2)
-        with col_a:
-            if st.button("✅ Keep Only Selected Columns", type="primary", use_container_width=True):
-                if not cols_to_keep:
-                    st.error("Please select at least one column.")
-                else:
-                    st.session_state.df = st.session_state.df[cols_to_keep].copy()
-                    st.success(f"Kept {len(cols_to_keep)} column(s). New shape: {st.session_state.df.shape[0]:,} × {st.session_state.df.shape[1]}")
-                    st.rerun()
-        with col_b:
-            if st.button("🔄 Reset Selection to All", use_container_width=True):
+        if st.button("✅ Keep Only Selected Columns", type="primary"):
+            if not cols_to_keep:
+                st.error("Select at least one column.")
+            else:
+                st.session_state.df = st.session_state.df[cols_to_keep].copy()
+                st.session_state.editor_key += 1
+                st.success(f"Kept {len(cols_to_keep)} columns.")
                 st.rerun()
 
-    # ====================== NEW: GROUP BY & AGGREGATE ======================
+    # ====================== GROUP BY & AGGREGATE ======================
     with st.expander("📊 Group By & Aggregate Variables", expanded=False):
-        st.caption("Group the data by one or more variables and aggregate numeric columns. Perfect for creating summary tables before visualization (e.g. average sales by region + year).")
+        st.caption("Create summary tables (e.g. mean sales by Region + Year).")
         
         current_cols = list(st.session_state.df.columns)
         numeric_cols = [c for c in current_cols if pd.api.types.is_numeric_dtype(st.session_state.df[c])]
-        cat_or_other = [c for c in current_cols if c not in numeric_cols]
         
         group_by_cols = st.multiselect(
-            "Grouping variables (usually categorical)",
+            "Grouping variables",
             options=current_cols,
-            default=[],
-            help="These columns will define the groups (like GROUP BY in SQL)."
+            default=[]
         )
         
         value_cols = st.multiselect(
             "Numeric variables to aggregate",
             options=numeric_cols,
-            default=numeric_cols[:min(5, len(numeric_cols))] if numeric_cols else [],
-            help="Only these numeric columns will be aggregated."
+            default=numeric_cols[:min(5, len(numeric_cols))] if numeric_cols else []
         )
         
         agg_method = st.selectbox(
             "Aggregation method",
             options=["mean", "sum", "median", "count", "min", "max", "std"],
-            index=0,
-            help="'count' returns the number of rows in each group."
+            index=0
         )
         
         if st.button("🚀 Apply Group By & Aggregate", type="primary"):
             if not group_by_cols:
-                st.error("Please select at least one grouping variable.")
+                st.error("Select at least one grouping variable.")
             elif not value_cols and agg_method != "count":
-                st.error("Please select at least one numeric variable to aggregate (or use 'count').")
+                st.error("Select at least one numeric column (or use count).")
             else:
                 try:
                     if agg_method == "count":
-                        # Simple row count per group
                         grouped = (
                             st.session_state.df
                             .groupby(group_by_cols, as_index=False)
@@ -313,7 +308,6 @@ with tab_data:
                             .rename(columns={"size": "count"})
                         )
                     else:
-                        # Aggregate selected numeric columns
                         agg_dict = {col: agg_method for col in value_cols}
                         grouped = (
                             st.session_state.df
@@ -322,31 +316,21 @@ with tab_data:
                         )
                     
                     st.session_state.df = grouped.copy()
-                    st.success(
-                        f"✅ Grouped successfully! "
-                        f"New shape: {grouped.shape[0]:,} rows × {grouped.shape[1]} columns"
-                    )
+                    st.session_state.editor_key += 1
+                    st.success(f"✅ Grouped! New shape: {grouped.shape[0]:,} × {grouped.shape[1]}")
                     st.rerun()
                 except Exception as e:
                     st.error(f"Grouping failed: {e}")
-        
-        if group_by_cols:
-            st.info(f"Preview: will group by **{', '.join(group_by_cols)}** "
-                    f"and apply **{agg_method}** on {len(value_cols)} numeric column(s).")
 
-    # ====================== COLUMN TOOLS (Add / Delete) ======================
+    # ====================== ADD / DELETE COLUMNS ======================
     with st.expander("➕ Add / Delete Columns", expanded=True):
-        st.caption("**Note:** Changes are applied immediately. If the new column doesn't appear right away, click the **'Apply Edits'** button above the table once.")
-       
         col1, col2 = st.columns(2)
        
-        # --- ADD COLUMN ---
         with col1:
             st.markdown("**Add New Column**")
             new_col_name = st.text_input("Column name", placeholder="e.g. Region, Score", key="new_col_name")
             col_type = st.selectbox("Type", ["Text", "Number", "True/False"], key="new_col_type")
            
-            default_val = ""
             if col_type == "Number":
                 default_val = st.number_input("Default value", value=0.0, key="new_col_default_num")
             elif col_type == "True/False":
@@ -358,7 +342,7 @@ with tab_data:
                 if not new_col_name or new_col_name.strip() == "":
                     st.error("Column name cannot be empty.")
                 elif new_col_name in st.session_state.df.columns:
-                    st.error("A column with this name already exists.")
+                    st.error("Column already exists.")
                 else:
                     if col_type == "Text":
                         st.session_state.df[new_col_name] = str(default_val) if default_val else ""
@@ -366,24 +350,22 @@ with tab_data:
                         st.session_state.df[new_col_name] = float(default_val)
                     else:
                         st.session_state.df[new_col_name] = bool(default_val)
-                   
-                    st.success(f"✅ Column '{new_col_name}' added successfully!")
+                    st.session_state.editor_key += 1
+                    st.success(f"✅ Column '{new_col_name}' added.")
                     st.rerun()
        
-        # --- DELETE COLUMN ---
         with col2:
             st.markdown("**Delete Column**")
-            cols_to_delete = [c for c in st.session_state.df.columns]
+            cols_to_delete = list(st.session_state.df.columns)
             col_to_delete = st.selectbox("Select column to delete", cols_to_delete, key="col_to_delete")
            
             if st.button("Delete Selected Column", type="secondary", key="btn_del_col"):
                 if col_to_delete in st.session_state.df.columns:
                     st.session_state.df = st.session_state.df.drop(columns=[col_to_delete])
+                    st.session_state.editor_key += 1
                     st.success(f"✅ Column '{col_to_delete}' deleted.")
                     st.rerun()
-                else:
-                    st.error("Column not found.")
-   
+
     with st.expander("🧹 Quick Cleaning & Summary Tools", expanded=False):
         s1, s2 = st.columns([1, 1])
         with s1:
@@ -394,6 +376,7 @@ with tab_data:
         with s2:
             if st.button("Drop rows with any missing values"):
                 st.session_state.df = working_df.dropna().copy()
+                st.session_state.editor_key += 1
                 st.success("Missing rows removed.")
                 st.rerun()
            
@@ -403,7 +386,8 @@ with tab_data:
                     if working_df[c].isna().any():
                         working_df[c] = working_df[c].fillna(working_df[c].median())
                 st.session_state.df = working_df.copy()
-                st.success("Numeric missing values filled with median.")
+                st.session_state.editor_key += 1
+                st.success("Numeric NaNs filled with median.")
                 st.rerun()
        
         st.write("**Column Overview**")
@@ -434,7 +418,6 @@ with tab_config:
         index=0
     )
    
-    # Basic layout
     c1, c2 = st.columns(2)
     with c1:
         title = st.text_input("Plot Title", value=f"{plot_type}")
@@ -447,8 +430,7 @@ with tab_config:
     facet_style = st.radio(
         "Faceting mode",
         ["None", "Facet Wrap (recommended for many categories)", "Facet Grid (row × col)"],
-        horizontal=True,
-        help="Facet Wrap automatically arranges many subplots in a grid. Facet Grid lets you choose row and column variables separately."
+        horizontal=True
     )
    
     facet_col = None
@@ -458,10 +440,10 @@ with tab_config:
    
     if facet_style == "Facet Wrap (recommended for many categories)":
         facet_wrap_col = st.selectbox("Wrap using column", [None] + all_cols, index=0)
-        facet_col_wrap = st.slider("Max columns before wrapping to next row", 1, 6, 3)
+        facet_col_wrap = st.slider("Max columns before wrapping", 1, 6, 3)
     elif facet_style == "Facet Grid (row × col)":
-        facet_col = st.selectbox("Columns (horizontal split)", [None] + all_cols, index=0)
-        facet_row = st.selectbox("Rows (vertical split)", [None] + all_cols, index=0)
+        facet_col = st.selectbox("Columns (horizontal)", [None] + all_cols, index=0)
+        facet_row = st.selectbox("Rows (vertical)", [None] + all_cols, index=0)
    
     st.markdown("### 🎨 Color, Symbol & Size")
     color_col = st.selectbox("Color by", [None] + all_cols, index=0)
@@ -471,7 +453,7 @@ with tab_config:
     if plot_type in ["Scatter Plot", "Scatter Matrix"]:
         symbol_col = st.selectbox("Symbol by (categorical)", [None] + cat_cols, index=0)
         if plot_type == "Scatter Plot":
-            size_col = st.selectbox("Size by (bubble chart)", [None] + num_cols, index=0)
+            size_col = st.selectbox("Size by (bubble)", [None] + num_cols, index=0)
    
     st.markdown("### 📍 Main Variables")
    
@@ -479,12 +461,10 @@ with tab_config:
     trendline = marginal_x = marginal_y = barmode = None
     multiple_y_cols = None
    
-    # Scatter, Box, Violin - single Y only
     if plot_type in ["Scatter Plot", "Box Plot", "Violin Plot"]:
         x_col = st.selectbox("X variable", all_cols, index=0)
         y_col = st.selectbox("Y variable", [None] + all_cols, index=1 if len(all_cols) > 1 else 0)
    
-    # Line Chart - support multiple Y (multiple lines)
     elif plot_type == "Line Plot":
         x_col = st.selectbox("X variable", all_cols, index=0)
         use_multiple_y = st.checkbox("Use multiple Y variables (multiple lines)", value=False)
@@ -496,11 +476,9 @@ with tab_config:
                 default=num_cols[:min(4, len(num_cols))] if num_cols else []
             )
             y_col = None
-            st.caption("This will plot multiple lines (one per Y variable).")
         else:
             y_col = st.selectbox("Y variable", [None] + all_cols, index=1 if len(all_cols) > 1 else 0)
    
-    # Bar Chart - support multiple Y (grouped bars)
     elif plot_type == "Bar Chart":
         x_col = st.selectbox("X variable", all_cols, index=0)
         use_multiple_y = st.checkbox("Use multiple Y variables (grouped bars)", value=False)
@@ -512,7 +490,6 @@ with tab_config:
                 default=num_cols[:min(4, len(num_cols))] if num_cols else []
             )
             y_col = None
-            st.caption("This will create grouped bars for each selected Y variable.")
         else:
             y_col = st.selectbox("Y variable", [None] + all_cols, index=1 if len(all_cols) > 1 else 0)
    
@@ -522,13 +499,13 @@ with tab_config:
     elif plot_type == "Density Heatmap":
         x_col = st.selectbox("X (numeric)", num_cols if num_cols else all_cols, index=0)
         y_col = st.selectbox("Y (numeric)", num_cols if num_cols else all_cols, index=min(1, len(num_cols)-1) if num_cols else 0)
-        z_col = st.selectbox("Intensity (optional numeric)", [None] + num_cols, index=0)
+        z_col = st.selectbox("Intensity (optional)", [None] + num_cols, index=0)
     elif plot_type == "Pie Chart":
-        names_col = st.selectbox("Slice labels (categories)", cat_cols if cat_cols else all_cols, index=0)
-        values_col = st.selectbox("Slice sizes (numeric)", num_cols if num_cols else all_cols, index=0)
+        names_col = st.selectbox("Slice labels", cat_cols if cat_cols else all_cols, index=0)
+        values_col = st.selectbox("Slice sizes", num_cols if num_cols else all_cols, index=0)
     elif plot_type in ["Sunburst Chart", "Treemap"]:
         path_cols = st.multiselect(
-            "Hierarchy path (order matters: e.g. Region → Country → City)",
+            "Hierarchy path (order matters)",
             all_cols,
             default=all_cols[:min(3, len(all_cols))]
         )
@@ -540,7 +517,6 @@ with tab_config:
             default=(num_cols[:min(5, len(num_cols))] if num_cols else all_cols[:min(5, len(all_cols))])
         )
    
-    # Advanced panel
     with st.expander("⚙️ Advanced Options & Styling"):
         adv1, adv2 = st.columns(2)
         with adv1:
@@ -560,12 +536,10 @@ with tab_config:
            
             if plot_type in ["Box Plot", "Violin Plot"]:
                 points_option = st.selectbox("Show points / outliers",
-                                             ["outliers", "all", False], index=0,
-                                             help="'outliers' shows only outliers, 'all' shows every point")
+                                             ["outliers", "all", False], index=0)
            
             if plot_type == "Bar Chart":
-                barmode = st.selectbox("Bar grouping", ["group", "stack", "relative"], index=0,
-                                       help="Use 'group' for grouped/side-by-side bars (requires a 'Color by' column)")
+                barmode = st.selectbox("Bar grouping", ["group", "stack", "relative"], index=0)
        
         x_label = st.text_input("Custom X-axis label (optional)", value="")
         y_label = st.text_input("Custom Y-axis label (optional)", value="")
@@ -576,7 +550,6 @@ with tab_config:
             index=0
         )
    
-    # Save config to session
     st.session_state.plot_config = {
         "plot_type": plot_type,
         "title": title,
@@ -642,7 +615,6 @@ with tab_viz:
                     "labels": labels if labels else None,
                 }
                
-                # Facet handling
                 facet_kwargs = {}
                 if cfg.get("facet_col"):
                     facet_kwargs["facet_col"] = cfg["facet_col"]
@@ -652,7 +624,6 @@ with tab_viz:
                     facet_kwargs["facet_col"] = cfg["facet_wrap_col"]
                     facet_kwargs["facet_col_wrap"] = cfg.get("facet_col_wrap", 3)
                
-                # Color handling (recompute numeric columns locally to avoid scope issues)
                 df_plot_cols = df_plot.columns.tolist()
                 num_cols_local = [c for c in df_plot_cols if pd.api.types.is_numeric_dtype(df_plot[c])]
                 color_kwargs = {}
@@ -660,14 +631,12 @@ with tab_viz:
                     color_kwargs["color"] = cfg["color"]
                     cscale = cfg.get("color_scale", "Viridis")
                    
-                    # Only apply continuous scale to plot types that support it
                     continuous_supported = ptype in ["Scatter Plot", "Bar Chart", "Histogram",
                                                      "Box Plot", "Violin Plot", "Density Heatmap"]
                    
                     if cfg["color"] in num_cols_local and continuous_supported:
                         color_kwargs["color_continuous_scale"] = cscale.lower()
                     else:
-                        # discrete palette (works for Line, Scatter, etc.)
                         pal = getattr(px.colors.qualitative, cscale, px.colors.qualitative.Plotly)
                         color_kwargs["color_discrete_sequence"] = pal
                
@@ -675,17 +644,11 @@ with tab_viz:
                
                 if ptype == "Scatter Plot":
                     fig = px.scatter(
-                        df_plot,
-                        x=cfg.get("x"),
-                        y=cfg.get("y"),
-                        symbol=cfg.get("symbol"),
-                        size=cfg.get("size"),
+                        df_plot, x=cfg.get("x"), y=cfg.get("y"),
+                        symbol=cfg.get("symbol"), size=cfg.get("size"),
                         trendline=cfg.get("trendline"),
-                        marginal_x=cfg.get("marginal_x"),
-                        marginal_y=cfg.get("marginal_y"),
-                        **base_kwargs,
-                        **facet_kwargs,
-                        **color_kwargs
+                        marginal_x=cfg.get("marginal_x"), marginal_y=cfg.get("marginal_y"),
+                        **base_kwargs, **facet_kwargs, **color_kwargs
                     )
                     if cfg.get("marker_size") and not cfg.get("size"):
                         fig.update_traces(marker=dict(size=cfg["marker_size"]))
@@ -693,121 +656,76 @@ with tab_viz:
                 elif ptype == "Line Plot":
                     y_for_line = cfg.get("multiple_y") if cfg.get("multiple_y") else cfg.get("y")
                     fig = px.line(
-                        df_plot,
-                        x=cfg.get("x"),
-                        y=y_for_line,
-                        markers=True,
-                        **base_kwargs,
-                        **facet_kwargs,
-                        **color_kwargs
+                        df_plot, x=cfg.get("x"), y=y_for_line, markers=True,
+                        **base_kwargs, **facet_kwargs, **color_kwargs
                     )
                
                 elif ptype == "Bar Chart":
                     y_for_bar = cfg.get("multiple_y") if cfg.get("multiple_y") else cfg.get("y")
                     fig = px.bar(
-                        df_plot,
-                        x=cfg.get("x"),
-                        y=y_for_bar,
+                        df_plot, x=cfg.get("x"), y=y_for_bar,
                         barmode=cfg.get("barmode", "group"),
-                        **base_kwargs,
-                        **facet_kwargs,
-                        **color_kwargs
+                        **base_kwargs, **facet_kwargs, **color_kwargs
                     )
                
                 elif ptype == "Histogram":
                     fig = px.histogram(
-                        df_plot,
-                        x=cfg.get("x"),
-                        nbins=cfg.get("nbins", 20),
-                        **base_kwargs,
-                        **facet_kwargs,
-                        **color_kwargs
+                        df_plot, x=cfg.get("x"), nbins=cfg.get("nbins", 20),
+                        **base_kwargs, **facet_kwargs, **color_kwargs
                     )
                
                 elif ptype == "Box Plot":
                     fig = px.box(
-                        df_plot,
-                        x=cfg.get("x"),
-                        y=cfg.get("y"),
-                        points="outliers",
-                        **base_kwargs,
-                        **facet_kwargs,
-                        **color_kwargs
+                        df_plot, x=cfg.get("x"), y=cfg.get("y"), points="outliers",
+                        **base_kwargs, **facet_kwargs, **color_kwargs
                     )
                
                 elif ptype == "Violin Plot":
                     fig = px.violin(
-                        df_plot,
-                        x=cfg.get("x"),
-                        y=cfg.get("y"),
-                        box=True,
-                        points="outliers",
-                        **base_kwargs,
-                        **facet_kwargs,
-                        **color_kwargs
+                        df_plot, x=cfg.get("x"), y=cfg.get("y"), box=True, points="outliers",
+                        **base_kwargs, **facet_kwargs, **color_kwargs
                     )
                
                 elif ptype == "Density Heatmap":
                     fig = px.density_heatmap(
-                        df_plot,
-                        x=cfg.get("x"),
-                        y=cfg.get("y"),
-                        z=cfg.get("z"),
+                        df_plot, x=cfg.get("x"), y=cfg.get("y"), z=cfg.get("z"),
                         color_continuous_scale=cfg.get("color_scale", "Viridis").lower(),
-                        **base_kwargs,
-                        **facet_kwargs
+                        **base_kwargs, **facet_kwargs
                     )
                
                 elif ptype == "Pie Chart":
                     fig = px.pie(
-                        df_plot,
-                        names=cfg.get("names"),
-                        values=cfg.get("values"),
-                        hole=0.35,
-                        title=cfg.get("title"),
-                        height=cfg.get("height"),
-                        width=cfg.get("width"),
+                        df_plot, names=cfg.get("names"), values=cfg.get("values"),
+                        hole=0.35, title=cfg.get("title"),
+                        height=cfg.get("height"), width=cfg.get("width"),
                         template=cfg.get("template")
                     )
                
                 elif ptype == "Sunburst Chart":
                     fig = px.sunburst(
-                        df_plot,
-                        path=cfg.get("path", []),
-                        values=cfg.get("values"),
-                        color=cfg.get("color"),
-                        title=cfg.get("title"),
-                        height=cfg.get("height"),
-                        width=cfg.get("width"),
+                        df_plot, path=cfg.get("path", []), values=cfg.get("values"),
+                        color=cfg.get("color"), title=cfg.get("title"),
+                        height=cfg.get("height"), width=cfg.get("width"),
                         template=cfg.get("template")
                     )
                
                 elif ptype == "Treemap":
                     fig = px.treemap(
-                        df_plot,
-                        path=cfg.get("path", []),
-                        values=cfg.get("values"),
-                        color=cfg.get("color"),
-                        title=cfg.get("title"),
-                        height=cfg.get("height"),
-                        width=cfg.get("width"),
+                        df_plot, path=cfg.get("path", []), values=cfg.get("values"),
+                        color=cfg.get("color"), title=cfg.get("title"),
+                        height=cfg.get("height"), width=cfg.get("width"),
                         template=cfg.get("template")
                     )
                
                 elif ptype == "Scatter Matrix":
                     fig = px.scatter_matrix(
-                        df_plot,
-                        dimensions=cfg.get("dimensions", all_cols[:4]),
-                        color=cfg.get("color"),
-                        symbol=cfg.get("symbol"),
-                        title=cfg.get("title"),
-                        height=cfg.get("height"),
-                        width=cfg.get("width"),
-                        template=cfg.get("template")
+                        df_plot, dimensions=cfg.get("dimensions", all_cols[:4]),
+                        color=cfg.get("color"), symbol=cfg.get("symbol"),
+                        title=cfg.get("title"), height=cfg.get("height"),
+                        width=cfg.get("width"), template=cfg.get("template")
                     )
                
                 if fig is not None:
-                    # Layout polish
                     legend_orient = "h" if cfg.get("legend_pos") in ["bottom", "top"] else "v"
                     fig.update_layout(
                         showlegend=cfg.get("show_legend", True),
@@ -830,27 +748,28 @@ with tab_viz:
                    
                     st.session_state.last_fig = fig
                     st.success("✅ Plot ready!")
-                    # Add to Dashboard button (Step 1 of advanced dashboard)
-                    if st.button("➕ Add this plot to Dashboard", key="add_to_dashboard"):
-                        plot_copy = st.session_state.plot_config.copy()
-                        plot_copy["id"] = len(st.session_state.dashboard_plots) + 1
-                        st.session_state.dashboard_plots.append(plot_copy)
-                        st.success("Plot added to Dashboard! Go to the 📊 Dashboard tab to view it.")
-                else:
-                    st.warning("Plot type not fully implemented or missing required columns.")
            
             except Exception as err:
                 st.error(f"Error while building plot: {err}")
                 with st.expander("Technical traceback"):
                     st.exception(err)
    
-    # Render plot if available
+    # ========== RENDER PLOT + ADD TO DASHBOARD (FIXED) ==========
     if st.session_state.last_fig is not None:
         st.plotly_chart(
             st.session_state.last_fig,
             use_container_width=True,
-            config={"displayModeBar": True, "displaylogo": False, "toImageButtonOptions": {"format": "png", "filename": "dataviz_studio_plot"}}
+            config={"displayModeBar": True, "displaylogo": False,
+                    "toImageButtonOptions": {"format": "png", "filename": "dataviz_studio_plot"}}
         )
+       
+        # FIXED: Button is now outside the gen_btn block → always available
+        if st.button("➕ Add this plot to Dashboard", key="add_to_dashboard", type="secondary"):
+            plot_copy = st.session_state.plot_config.copy()
+            plot_copy["id"] = len(st.session_state.dashboard_plots) + 1
+            st.session_state.dashboard_plots.append(plot_copy)
+            st.success(f"✅ Plot added to Dashboard! (Total plots: {len(st.session_state.dashboard_plots)})")
+            st.rerun()
        
         st.divider()
         st.subheader("⬇️ Export Options")
@@ -867,8 +786,7 @@ with tab_viz:
                     data=html_buf.getvalue(),
                     file_name=f"plot_{datetime.now().strftime('%Y%m%d_%H%M%S')}.html",
                     mime="text/html",
-                    use_container_width=True,
-                    help="Fully interactive plot. Open in any browser."
+                    use_container_width=True
                 )
             except Exception as e:
                 st.caption(f"HTML export failed: {e}")
@@ -886,9 +804,10 @@ with tab_viz:
                     use_container_width=True
                 )
             except Exception as e:
-                st.info("PNG export requires kaleido (may not be available here). HTML download or screenshot works great!")
+                st.info("PNG export requires kaleido. Use HTML or screenshot instead.")
        
         with d3:
+            # Always uses the latest edited data
             csv_buf = BytesIO()
             st.session_state.df.to_csv(csv_buf, index=False)
             csv_buf.seek(0)
@@ -899,29 +818,22 @@ with tab_viz:
                 mime="text/csv",
                 use_container_width=True
             )
-       
-        st.caption("The HTML version is the most powerful — it preserves full interactivity for your audience.")
 
-# ---------- TAB 4: DASHBOARD (Step 1) ----------
+# ---------- TAB 4: DASHBOARD ----------
 with tab_dashboard:
     st.subheader("📊 Dashboard Builder")
-    st.caption("Combine multiple plots. Start by adding plots from the Visualize tab using the '➕ Add this plot to Dashboard' button.")
+    st.caption("Plots are re-rendered from the current data + saved config.")
+    
     if not st.session_state.dashboard_plots:
-        st.info("No plots added yet. Create a plot in the **📈 Visualize & Download** tab and click **'➕ Add this plot to Dashboard'**.")
+        st.info("No plots yet. Generate a plot → click **➕ Add this plot to Dashboard**.")
     else:
-        # Layout control
-        layout_cols = st.selectbox(
-            "Dashboard Layout",
-            options=[1, 2, 3],
-            index=1,
-            help="Number of columns to arrange the plots"
-        )
-        # Clear dashboard button
+        layout_cols = st.selectbox("Dashboard Layout", options=[1, 2, 3], index=1)
+        
         if st.button("🗑️ Clear All Dashboard Plots"):
             st.session_state.dashboard_plots = []
             st.rerun()
+        
         st.divider()
-        # Render plots in grid
         cols = st.columns(layout_cols)
        
         for idx, plot_cfg in enumerate(st.session_state.dashboard_plots):
@@ -930,127 +842,69 @@ with tab_dashboard:
             with col:
                 st.markdown(f"**Plot {plot_cfg.get('id', idx+1)}: {plot_cfg.get('title', 'Untitled')}**")
                
-                # Re-generate the figure using stored config
                 try:
-                    # Use the current working data
                     current_df = st.session_state.df.copy() if st.session_state.df is not None else None
                    
                     if current_df is not None and not current_df.empty:
-                        # Simplified re-rendering (we'll improve this in later steps)
                         fig = None
                         ptype = plot_cfg.get("plot_type")
                        
-                        # Re-render all supported plot types in Dashboard
                         if ptype == "Bar Chart":
                             y_val = plot_cfg.get("multiple_y") if plot_cfg.get("multiple_y") else plot_cfg.get("y")
-                            fig = px.bar(
-                                current_df,
-                                x=plot_cfg.get("x"),
-                                y=y_val,
-                                color=plot_cfg.get("color"),
-                                barmode=plot_cfg.get("barmode", "group"),
-                                title=plot_cfg.get("title"),
-                                height=400
-                            )
+                            fig = px.bar(current_df, x=plot_cfg.get("x"), y=y_val,
+                                         color=plot_cfg.get("color"),
+                                         barmode=plot_cfg.get("barmode", "group"),
+                                         title=plot_cfg.get("title"), height=400)
                         elif ptype == "Line Plot":
                             y_val = plot_cfg.get("multiple_y") if plot_cfg.get("multiple_y") else plot_cfg.get("y")
-                            fig = px.line(
-                                current_df,
-                                x=plot_cfg.get("x"),
-                                y=y_val,
-                                color=plot_cfg.get("color"),
-                                markers=True,
-                                title=plot_cfg.get("title"),
-                                height=400
-                            )
+                            fig = px.line(current_df, x=plot_cfg.get("x"), y=y_val,
+                                          color=plot_cfg.get("color"), markers=True,
+                                          title=plot_cfg.get("title"), height=400)
                         elif ptype == "Scatter Plot":
-                            fig = px.scatter(
-                                current_df,
-                                x=plot_cfg.get("x"),
-                                y=plot_cfg.get("y"),
-                                color=plot_cfg.get("color"),
-                                title=plot_cfg.get("title"),
-                                height=400
-                            )
+                            fig = px.scatter(current_df, x=plot_cfg.get("x"), y=plot_cfg.get("y"),
+                                             color=plot_cfg.get("color"),
+                                             title=plot_cfg.get("title"), height=400)
                         elif ptype == "Histogram":
-                            fig = px.histogram(
-                                current_df,
-                                x=plot_cfg.get("x"),
-                                color=plot_cfg.get("color"),
-                                nbins=plot_cfg.get("nbins", 20),
-                                title=plot_cfg.get("title"),
-                                height=400
-                            )
+                            fig = px.histogram(current_df, x=plot_cfg.get("x"),
+                                               color=plot_cfg.get("color"),
+                                               nbins=plot_cfg.get("nbins", 20),
+                                               title=plot_cfg.get("title"), height=400)
                         elif ptype == "Box Plot":
-                            fig = px.box(
-                                current_df,
-                                x=plot_cfg.get("x"),
-                                y=plot_cfg.get("y"),
-                                color=plot_cfg.get("color"),
-                                points="outliers",
-                                title=plot_cfg.get("title"),
-                                height=400
-                            )
+                            fig = px.box(current_df, x=plot_cfg.get("x"), y=plot_cfg.get("y"),
+                                         color=plot_cfg.get("color"), points="outliers",
+                                         title=plot_cfg.get("title"), height=400)
                         elif ptype == "Violin Plot":
-                            fig = px.violin(
-                                current_df,
-                                x=plot_cfg.get("x"),
-                                y=plot_cfg.get("y"),
-                                color=plot_cfg.get("color"),
-                                box=True,
-                                points="outliers",
-                                title=plot_cfg.get("title"),
-                                height=400
-                            )
+                            fig = px.violin(current_df, x=plot_cfg.get("x"), y=plot_cfg.get("y"),
+                                            color=plot_cfg.get("color"), box=True, points="outliers",
+                                            title=plot_cfg.get("title"), height=400)
                         elif ptype == "Density Heatmap":
-                            fig = px.density_heatmap(
-                                current_df,
-                                x=plot_cfg.get("x"),
-                                y=plot_cfg.get("y"),
-                                title=plot_cfg.get("title"),
-                                height=400
-                            )
+                            fig = px.density_heatmap(current_df, x=plot_cfg.get("x"), y=plot_cfg.get("y"),
+                                                     title=plot_cfg.get("title"), height=400)
                         elif ptype == "Pie Chart":
-                            fig = px.pie(
-                                current_df,
-                                names=plot_cfg.get("names"),
-                                values=plot_cfg.get("values"),
-                                title=plot_cfg.get("title"),
-                                height=400
-                            )
+                            fig = px.pie(current_df, names=plot_cfg.get("names"),
+                                         values=plot_cfg.get("values"),
+                                         title=plot_cfg.get("title"), height=400)
                         elif ptype == "Sunburst Chart":
-                            fig = px.sunburst(
-                                current_df,
-                                path=plot_cfg.get("path", []),
-                                values=plot_cfg.get("values"),
-                                color=plot_cfg.get("color"),
-                                title=plot_cfg.get("title"),
-                                height=400
-                            )
+                            fig = px.sunburst(current_df, path=plot_cfg.get("path", []),
+                                              values=plot_cfg.get("values"),
+                                              color=plot_cfg.get("color"),
+                                              title=plot_cfg.get("title"), height=400)
                         elif ptype == "Treemap":
-                            fig = px.treemap(
-                                current_df,
-                                path=plot_cfg.get("path", []),
-                                values=plot_cfg.get("values"),
-                                color=plot_cfg.get("color"),
-                                title=plot_cfg.get("title"),
-                                height=400
-                            )
+                            fig = px.treemap(current_df, path=plot_cfg.get("path", []),
+                                             values=plot_cfg.get("values"),
+                                             color=plot_cfg.get("color"),
+                                             title=plot_cfg.get("title"), height=400)
                         elif ptype == "Scatter Matrix":
-                            fig = px.scatter_matrix(
-                                current_df,
-                                dimensions=plot_cfg.get("dimensions", []),
-                                color=plot_cfg.get("color"),
-                                title=plot_cfg.get("title"),
-                                height=500
-                            )
+                            fig = px.scatter_matrix(current_df,
+                                                    dimensions=plot_cfg.get("dimensions", []),
+                                                    color=plot_cfg.get("color"),
+                                                    title=plot_cfg.get("title"), height=500)
                         else:
-                            st.info(f"Preview for '{ptype}' is not yet supported in Dashboard.")
+                            st.info(f"Preview for '{ptype}' not yet fully supported in Dashboard.")
                        
                         if fig:
                             st.plotly_chart(fig, use_container_width=True, key=f"dash_plot_{idx}")
                    
-                    # Remove button for this plot
                     if st.button(f"❌ Remove Plot {idx+1}", key=f"remove_{idx}"):
                         st.session_state.dashboard_plots.pop(idx)
                         st.rerun()
@@ -1062,11 +916,7 @@ with tab_dashboard:
 st.divider()
 st.caption("DataViz Studio • Make beautiful visualizations without writing code • Powered by Plotly & Streamlit")
 
-# Guard: If someone runs this file directly with `python app.py` instead of `streamlit run app.py`
 if __name__ == "__main__" and not st.runtime.exists():
     print("\n" + "="*60)
-    print("⚠️ You ran this file with plain Python.")
-    print("✅ Correct way to start the app:")
-    print(" streamlit run app.py")
-    print("\nOr simply double-click the 'run_app.sh' (Linux/Mac) or 'run_app.bat' (Windows) file I provided.")
+    print("⚠️ Run with:  streamlit run app.py")
     print("="*60 + "\n")
