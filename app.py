@@ -1,7 +1,6 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
-import plotly.io as pio
 from plotly.subplots import make_subplots
 import plotly.graph_objects as go
 from io import BytesIO
@@ -19,7 +18,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 st.title("📊 DataViz Studio")
-st.caption("Cleaner controls • Always-visible X • Choose exact boundary positions • Multi-Y • Dashboard export")
+st.caption("Empty facets are now automatically hidden • Cleaner controls • Exact boundary placement")
 
 # ---------- Session state ----------
 for key in ['df', 'original_df', 'last_fig', 'plot_config', 'plot_type']:
@@ -121,7 +120,6 @@ with tab_data:
     if b3.button("🔄 Refresh", use_container_width=True):
         st.rerun()
 
-    # (Keeping the useful tools – melt, select columns, groupby, etc.)
     with st.expander("🔄 Melt / Select Columns / Group By", expanded=False):
         st.markdown("**Melt (wide → long)**")
         num_cols = [c for c in st.session_state.df.columns if pd.api.types.is_numeric_dtype(st.session_state.df[c])]
@@ -155,7 +153,7 @@ with tab_data:
             st.session_state.editor_key += 1
             st.rerun()
 
-# ==================== TAB 2: CONFIG (completely rewritten for clarity) ====================
+# ==================== TAB 2: CONFIG ====================
 with tab_config:
     st.subheader("🎨 Configure Your Plot")
     
@@ -169,17 +167,15 @@ with tab_config:
         "Pie Chart", "Sunburst Chart", "Treemap", "Scatter Matrix"
     ])
     
-    # Layout basics
     c1, c2 = st.columns(2)
     title = c1.text_input("Title", value=plot_type)
     height = c1.slider("Height", 450, 1200, 680, 25)
     width = c2.slider("Width", 600, 1600, 980, 25)
     template = c2.selectbox("Theme", ["plotly", "plotly_dark", "ggplot2", "seaborn", "simple_white", "presentation"])
     
-    # ---------- MAIN VARIABLES (always clear) ----------
+    # ---------- MAIN VARIABLES ----------
     st.markdown("### 📍 Variables")
     
-    # These plots always need an X
     needs_x = plot_type in ["Scatter Plot", "Line Plot", "Bar Chart", "Box Plot", "Violin Plot", "Histogram"]
     
     x_col = y_col = None
@@ -189,10 +185,8 @@ with tab_config:
     if needs_x:
         x_col = st.selectbox("X variable", all_cols, key="x_var")
         
-        # Multiple Y toggle – only for relevant plots
         if plot_type in ["Scatter Plot", "Line Plot", "Bar Chart", "Box Plot", "Violin Plot", "Histogram"]:
-            use_multiple_y = st.checkbox("Use multiple Y variables", value=False,
-                                         help="Select several numeric columns to plot together")
+            use_multiple_y = st.checkbox("Use multiple Y variables", value=False)
             
             if use_multiple_y:
                 multiple_y_cols = st.multiselect(
@@ -204,7 +198,6 @@ with tab_config:
             else:
                 y_col = st.selectbox("Y variable", [None] + all_cols, index=1 if len(all_cols) > 1 else 0, key="y_var")
     
-    # Plot-type specific variables
     names_col = values_col = path_cols = dimensions = nbins = z_col = None
     
     if plot_type == "Histogram" and not use_multiple_y:
@@ -222,7 +215,7 @@ with tab_config:
     elif plot_type == "Scatter Matrix":
         dimensions = st.multiselect("Variables", num_cols or all_cols, default=(num_cols or all_cols)[:5])
     
-    # Color / Symbol / Size
+    # Appearance
     st.markdown("### 🎨 Appearance")
     color_col = st.selectbox("Color by", [None] + all_cols)
     symbol_col = size_col = None
@@ -237,35 +230,29 @@ with tab_config:
     facet_col = facet_row = facet_wrap_col = None
     facet_col_wrap = 3
     if facet_style == "Facet Wrap":
-        facet_wrap_col = st.selectbox("Column", [None] + all_cols)
+        facet_wrap_col = st.selectbox("Column to wrap", [None] + all_cols)
         facet_col_wrap = st.slider("Max columns per row", 1, 6, 3)
     elif facet_style == "Facet Grid":
-        facet_col = st.selectbox("Horizontal", [None] + all_cols)
-        facet_row = st.selectbox("Vertical", [None] + all_cols)
+        facet_col = st.selectbox("Horizontal (columns)", [None] + all_cols)
+        facet_row = st.selectbox("Vertical (rows)", [None] + all_cols)
     
-    # ---------- BAR CHART SPECIFIC (intuitive) ----------
+    # Bar options
     bar_width = 0.7
     show_boundaries = False
     boundary_after = []
     
     if plot_type == "Bar Chart":
         st.markdown("### 📊 Bar Chart Options")
-        bar_width = st.slider("Bar width", 0.15, 1.0, 0.70, 0.05,
-                              help="1.0 = bars touch each other")
-        
+        bar_width = st.slider("Bar width", 0.15, 1.0, 0.70, 0.05)
         show_boundaries = st.checkbox("Add vertical boundaries between categories")
         
         if show_boundaries and x_col:
-            # Get unique categories in the order they appear
             unique_cats = working_df[x_col].dropna().unique().tolist()
-            # Convert to string for display safety
             unique_cats_str = [str(c) for c in unique_cats]
-            
             boundary_after = st.multiselect(
                 "Draw a vertical line AFTER these categories",
                 options=unique_cats_str,
-                default=[],
-                help="Select the categories after which you want a separator line"
+                help="Select categories after which you want a separator"
             )
     
     # Advanced
@@ -291,7 +278,7 @@ with tab_config:
         color_scale = st.selectbox("Color scale", 
             ["Viridis", "Plasma", "Inferno", "Magma", "Cividis", "Turbo", "RdBu", "Spectral", "Set1", "Set2", "Paired"])
     
-    # Save everything
+    # Save config
     st.session_state.plot_config = {
         "plot_type": plot_type, "title": title, "height": height, "width": width, "template": template,
         "x": x_col, "y": y_col, "multiple_y": multiple_y_cols,
@@ -316,6 +303,32 @@ with tab_viz:
         df_plot = st.session_state.df.copy()
         
         try:
+            # ========== NEW: Drop empty facets ==========
+            facet_vars = []
+            if cfg.get("facet_wrap_col"):
+                facet_vars.append(cfg["facet_wrap_col"])
+            if cfg.get("facet_col"):
+                facet_vars.append(cfg["facet_col"])
+            if cfg.get("facet_row"):
+                facet_vars.append(cfg["facet_row"])
+            
+            y_cols = []
+            if cfg.get("multiple_y"):
+                y_cols = [c for c in cfg["multiple_y"] if c in df_plot.columns]
+            elif cfg.get("y") and cfg.get("y") in df_plot.columns:
+                y_cols = [cfg["y"]]
+            
+            if facet_vars and y_cols:
+                # Keep only rows that have at least one non-null Y
+                mask = df_plot[y_cols].notna().any(axis=1)
+                df_valid = df_plot.loc[mask]
+                
+                for fv in facet_vars:
+                    if fv in df_valid.columns:
+                        valid_levels = df_valid[fv].dropna().unique()
+                        df_plot = df_plot[df_plot[fv].isin(valid_levels)].copy()
+            # ===========================================
+            
             labels = {}
             if cfg.get("x_label"): labels[cfg.get("x")] = cfg["x_label"]
             if cfg.get("y_label"): labels[cfg.get("y")] = cfg["y_label"]
@@ -355,22 +368,17 @@ with tab_viz:
             elif ptype == "Bar Chart":
                 fig = px.bar(df_plot, x=cfg["x"], y=y_data, barmode=cfg.get("barmode", "group"),
                              **base, **facet, **color_kw)
-                # Bar width
                 fig.update_traces(width=cfg.get("bar_width", 0.7))
                 
-                # Custom boundaries
                 if cfg.get("show_boundaries") and cfg.get("boundary_after") and cfg.get("x"):
-                    # Map category → position (0, 1, 2, ...)
                     cats = df_plot[cfg["x"]].dropna().unique().tolist()
                     cat_to_pos = {str(c): i for i, c in enumerate(cats)}
-                    
                     shapes = []
                     for cat_str in cfg["boundary_after"]:
                         if cat_str in cat_to_pos:
-                            pos = cat_to_pos[cat_str] + 0.5   # line after the bar
+                            pos = cat_to_pos[cat_str] + 0.5
                             shapes.append(dict(
-                                type="line",
-                                x0=pos, x1=pos, y0=0, y1=1, yref="paper",
+                                type="line", x0=pos, x1=pos, y0=0, y1=1, yref="paper",
                                 line=dict(color="rgba(60,60,60,0.7)", width=1.8, dash="dot")
                             ))
                     if shapes:
@@ -421,7 +429,7 @@ with tab_viz:
                     fig.update_traces(marker_opacity=cfg["opacity"])
                 
                 st.session_state.last_fig = fig
-                st.success("✅ Ready")
+                st.success("✅ Ready — empty facets were automatically removed")
         
         except Exception as e:
             st.error(str(e))
@@ -476,7 +484,19 @@ with tab_dashboard:
             with cols[i % layout]:
                 st.markdown(f"**{cfg.get('title', f'Plot {i+1}')}**")
                 try:
-                    df = st.session_state.df
+                    df = st.session_state.df.copy()
+                    
+                    # Also drop empty facets in dashboard
+                    facet_vars = [v for v in [cfg.get("facet_wrap_col"), cfg.get("facet_col"), cfg.get("facet_row")] if v]
+                    y_cols = cfg.get("multiple_y") or ([cfg.get("y")] if cfg.get("y") else [])
+                    y_cols = [c for c in y_cols if c in df.columns]
+                    if facet_vars and y_cols:
+                        mask = df[y_cols].notna().any(axis=1)
+                        valid = df.loc[mask]
+                        for fv in facet_vars:
+                            if fv in valid.columns:
+                                df = df[df[fv].isin(valid[fv].unique())]
+                    
                     y_val = cfg.get("multiple_y") or cfg.get("y")
                     ptype = cfg["plot_type"]
                     fig = None
@@ -485,7 +505,6 @@ with tab_dashboard:
                         fig = px.bar(df, x=cfg.get("x"), y=y_val, color=cfg.get("color"),
                                      barmode=cfg.get("barmode", "group"), title=cfg.get("title"), height=380)
                         fig.update_traces(width=cfg.get("bar_width", 0.7))
-                        # boundaries
                         if cfg.get("show_boundaries") and cfg.get("boundary_after") and cfg.get("x"):
                             cats = df[cfg["x"]].dropna().unique().tolist()
                             cat_to_pos = {str(c): i for i, c in enumerate(cats)}
@@ -515,7 +534,6 @@ with tab_dashboard:
                     elif ptype == "Pie Chart":
                         fig = px.pie(df, names=cfg.get("names"), values=cfg.get("values"),
                                      title=cfg.get("title"), height=380)
-                    # ... (other types follow same pattern)
                     
                     if fig:
                         st.plotly_chart(fig, use_container_width=True, key=f"d{i}")
@@ -527,7 +545,6 @@ with tab_dashboard:
                 except Exception as e:
                     st.error(str(e))
         
-        # Download
         st.divider()
         if figs_for_download:
             try:
@@ -539,4 +556,4 @@ with tab_dashboard:
                                    f"dashboard_{datetime.now():%Y%m%d_%H%M%S}.html", "text/html")
             except: pass
 
-st.caption("DataViz Studio – X is always selectable • Exact boundary placement • Cleaner flow")
+st.caption("DataViz Studio – Empty facets are automatically hidden")
